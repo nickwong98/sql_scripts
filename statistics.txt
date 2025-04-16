@@ -1,0 +1,11 @@
+-- Returning simple statistics properties for a table
+SELECT * FROM sys.dm_db_stats_properties (object_id('schema1.table1'), 1);
+
+-- Returning all statistics properties for a table
+SELECT sp.stats_id, name, filter_definition, last_updated, rows, rows_sampled, steps, unfiltered_rows, modification_counter
+FROM sys.stats AS stat
+CROSS APPLY sys.dm_db_stats_properties(stat.object_id, stat.stats_id) AS sp
+WHERE stat.object_id = object_id('schema1.table1');
+
+-- updates all statistics on a table
+UPDATE STATISTICS [schema1].[table1];
