@@ -1,4 +1,4 @@
-## This script is for Azure SQL index defragmentation via Automation Account
+# This script is for Azure SQL index defragmentation via Automation Account
 
 param (
     [string]$serverName = "<your-server>.database.windows.net",
