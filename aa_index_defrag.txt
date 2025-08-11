@@ -1,0 +1,60 @@
+## This script is for Azure SQL index defragmentation via Automation Account
+
+param (
+    [string]$serverName = "<your-server>.database.windows.net",
+    [string]$databaseName = "<your-database>"
+)
+
+# Authenticate using the system-assigned managed identity
+Connect-AzAccount -Identity | Out-Null
+
+# Get access token for Azure SQL
+$token = (Get-AzAccessToken -ResourceUrl "https://database.windows.net/").Token
+
+# Load required .NET types
+Add-Type -AssemblyName "System.Data"
+
+# Create SQL connection
+$connection = New-Object System.Data.SqlClient.SqlConnection
+$connection.ConnectionString = "Server=tcp:$serverName,1433;Database=$databaseName;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+
+# Set access token using reflection (workaround for System.Data.SqlClient)
+$connectionType = $connection.GetType()
+$accessTokenProperty = $connectionType.GetProperty("AccessToken")
+$accessTokenProperty.SetValue($connection, $token, $null)
+
+# SQL command to rebuild indexes with page count > 1000 and fragmentation > 30%
+$command = $connection.CreateCommand()
+$command.CommandText = @"
+DECLARE @TableName NVARCHAR(256)
+DECLARE @IndexName NVARCHAR(256)
+DECLARE @SQL NVARCHAR(MAX)
+
+DECLARE index_cursor CURSOR FOR
+SELECT OBJECT_SCHEMA_NAME(ips.object_id) + '.' + OBJECT_NAME(ips.object_id) AS TableName,
+       i.name AS IndexName
+FROM sys.dm_db_index_physical_stats (DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
+JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+WHERE ips.page_count > 1000 AND ips.avg_fragmentation_in_percent > 30 AND i.type_desc IN ('CLUSTERED', 'NONCLUSTERED')
+
+OPEN index_cursor
+FETCH NEXT FROM index_cursor INTO @TableName, @IndexName
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SQL = 'ALTER INDEX [' + @IndexName + '] ON ' + @TableName + ' REBUILD WITH (ONLINE = ON)'
+    EXEC sp_executesql @SQL
+    FETCH NEXT FROM index_cursor INTO @TableName, @IndexName
+END
+
+CLOSE index_cursor
+DEALLOCATE index_cursor
+"@
+
+# Timeout in seconds (e.g., 8 hours)
+$command.CommandTimeout = 28800
+
+# Execute the SQL command
+$connection.Open()
+$command.ExecuteNonQuery()
+$connection.Close()
