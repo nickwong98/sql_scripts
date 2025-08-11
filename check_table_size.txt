@@ -1,0 +1,34 @@
+EXEC sp_spaceused '<schema_name>.<table_name>';
+
+-- Disk Usage by Top Table
+SELECT 
+    QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) AS [Table Name],
+    MAX(CASE WHEN i.index_id IN (0,1) THEN p.rows ELSE 0 END) AS [# Records],
+    CAST(SUM(a.total_pages) * 8 AS BIGINT) AS [Reserved (KB)],
+    CAST(SUM(
+        CASE 
+            WHEN a.type != 1 THEN a.used_pages 
+            WHEN p.index_id < 2 THEN a.data_pages 
+            ELSE 0 
+        END
+    ) * 8 AS BIGINT) AS [Data (KB)],
+    CAST(SUM(a.used_pages) * 8 AS BIGINT) - CAST(SUM(
+        CASE 
+            WHEN a.type != 1 THEN a.used_pages 
+            WHEN p.index_id < 2 THEN a.data_pages 
+            ELSE 0 
+        END
+    ) * 8 AS BIGINT) AS [Indexes (KB)],
+    CAST(SUM(a.total_pages - a.used_pages) * 8 AS BIGINT) AS [Unused (KB)]
+FROM 
+    sys.tables t
+    INNER JOIN sys.indexes i ON t.object_id = i.object_id
+    INNER JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+    INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
+WHERE 
+    t.is_ms_shipped = 0
+    AND t.type = 'U'
+GROUP BY 
+    t.schema_id, t.name
+ORDER BY 
+    [Reserved (KB)] DESC;
